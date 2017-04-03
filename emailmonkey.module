@@ -1,0 +1,912 @@
+<?php
+
+/**
+ * @file
+ * EmailMonkey module file.
+ */
+
+/**
+ * Declare the library dependencies for the module.
+ *
+ * @see hook_libraries_info()
+ */
+function emailmonkey_libraries_info() {
+  $libraries['mailchimp-api-php'] = array(
+    'name' => t('MailChimp API for PHP'),
+    'vendor url' => 'https://github.com/thinkshout/mailchimp-api-php',
+    'download url' => 'https://github.com/thinkshout/mailchimp-api-php/archive/1.0.6.zip',
+    'version arguments' => array(
+      'file' => 'composer.json',
+      'pattern' => '/"version": "([0-9a-zA-Z.-]+)"/'),
+    'files' => array(
+      'php' => array(
+        'src/Mailchimp.php',
+        'src/MailchimpAPIException',
+        'src/MailchimpCampaigns.php',
+        'src/MailchimpLists.php',
+        'src/MailchimpReports.php',
+        'src/MailchimpTemplates.php',
+        'vendor/autoload.php')));
+
+  $libraries['minify'] = array(
+    'name' => t('Minify'),
+    'vendor url' => 'https://github.com/mrclay/minify',
+    'download url' => 'https://github.com/mrclay/minify/archive/2.3.0.zip',
+    'version arguments' => array(
+      'file' => 'History.txt',
+      'pattern' => '/^Version ([0-9.]+)/'),
+    'files' => array(
+      'php' => array(
+        'min/lib/Minify/CommentPreserver.php',
+        'min/lib/Minify/CSS.php',
+        'min/lib/Minify/CSSMin.php',
+        'min/lib/Minify/CSS/Compressor.php',
+        'min/lib/Minify/CSS/UriRewriter.php',
+        'min/lib/Minify/HTML.php',
+        'min/lib/Minify/HTML/Helper.php',
+        'min/lib/Minify/ImportProcessor.php')));
+
+  $libraries['emogrifier'] = array(
+    'name' => t('Emogrifier'),
+    'vendor url' => 'https://github.com/jjriv/emogrifier',
+    'download url' => 'https://github.com/jjriv/emogrifier/archive/1.1.0.zip',
+    'version arguments' => array(
+      'file' => 'CHANGELOG.md',
+      'lines' => 100,
+      'pattern' => '/^## ([0-9][0-9a-zA-Z.-]+)/'),
+    'files' => array(
+      'php' => array(
+        'Classes/Emogrifier.php')));
+
+  return $libraries;
+}
+
+/**
+ * Load the includes for the module.
+ */
+function emailmonkey_load_includes() {
+  $loaded = &drupal_static(__FUNCTION__);
+
+  if (!empty($loaded)) {
+    return;
+  }
+
+  $loaded = true;
+  module_load_include('inc', 'emailmonkey', 'includes/accounts');
+  module_load_include('inc', 'emailmonkey', 'includes/campaigns');
+  module_load_include('inc', 'emailmonkey', 'includes/data');
+  module_load_include('inc', 'emailmonkey', 'includes/form');
+  module_load_include('inc', 'emailmonkey', 'includes/lists');
+  module_load_include('inc', 'emailmonkey', 'includes/misc');
+  module_load_include('inc', 'emailmonkey', 'includes/segments');
+  module_load_include('inc', 'emailmonkey', 'includes/validation');
+}
+
+/**
+ * Determine if the library dependencies for the module are installed.
+ *
+ * @return
+ *   Returns TRUE if the dependencies are installed and FALSE otherwise.
+ */
+function emailmonkey_are_libraries_installed() {
+  $mailchimp = libraries_detect('mailchimp-api-php');
+  $minify = libraries_detect('minify');
+  $emogrifier = libraries_detect('emogrifier');
+
+  $installed = $mailchimp && !empty($mailchimp['installed']);
+  $installed = $installed && $minify && !empty($minify['installed']);
+  $installed = $installed && $emogrifier && !empty($emogrifier['installed']);
+
+  return $installed;
+}
+
+/**
+ * Load the library dependencies for the module. A log entry will be created and
+ * an exception will be thrown if the libraries couldn't be loaded.
+ *
+ * @return
+ *   TRUE if the dependencies were successfully loaded and FALSE otherwise.
+ */
+function emailmonkey_load_libraries() {
+  $loaded = &drupal_static(__FUNCTION__);
+
+  if (!empty($loaded)) {
+    return TRUE;
+  }
+
+  $mailchimp = libraries_load('mailchimp-api-php');
+  $minify = libraries_load('minify');
+  $emogrifier = libraries_load('emogrifier');
+
+  $loaded = $mailchimp && !empty($mailchimp['loaded']);
+  $loaded = $loaded && $minify && !empty($minify['loaded']);
+  $loaded = $loaded && $emogrifier && !empty($emogrifier['loaded']);
+
+  if (!$loaded) {
+    $message = t('The dependencies for the EmailMonkey module are not installed and loaded.');
+
+    watchdog('emailmonkey', $message, NULL, WATCHDOG_ERROR);
+    throw new EmailMonkey_Exception($message);
+  }
+}
+
+/**
+ * Declare the permissions for the module.
+ *
+ * @see hook_permission()
+ */
+function emailmonkey_permission() {
+  $permissions['emailmonkey_administer'] = array(
+    'title' => t('Administer EmailMonkey'),
+    'description' => t('Change and view the configuration, including the MailChimp API key.'),
+    'restrict access' => TRUE);
+
+  $permissions['emailmonkey_configure_node'] = array(
+    'title' => t('Edit node configuration'));
+
+  $permissions['emailmonkey_preview_campaigns'] = array(
+    'title' => t('Preview campaigns'));
+
+  $permissions['emailmonkey_export_campaigns'] = array(
+    'title' => t('Export campaigns'),
+    'description' => t('This implies %preview.', array('%preview' => t('Preview campaigns'))));
+
+  $permissions['emailmonkey_delete_campaigns'] = array(
+    'title' => t('Delete campaigns'),
+    'description' => t('This implies %preview.', array('%preview' => t('Preview campaigns'))));
+
+  $permissions['emailmonkey_send_campaigns'] = array(
+    'title' => t('Send campaigns'),
+    'description' => t('This implies %preview.', array('%preview' => t('Preview campaigns'))));
+
+  return $permissions;
+}
+
+/**
+ * Declare the menu items for the module.
+ *
+ * @see hook_menu()
+ */
+function emailmonkey_menu() {
+  $menu['admin/config/services/emailmonkey'] = array(
+    'title' => t('EmailMonkey'),
+    'description' => t('Configure EmailMonkey.'),
+    'page callback' => 'emailmonkey_admin_page',
+    'page arguments' => array('emailmonkey_form_admin_settings'),
+    'access arguments' => array('emailmonkey_administer'),
+    'type' => MENU_NORMAL_ITEM);
+
+  $menu['admin/config/services/emailmonkey/configure'] = array(
+    'title' => t('EmailMonkey'),
+    'weight' => -10,
+    'type' => MENU_DEFAULT_LOCAL_TASK);
+
+  $menu['admin/config/services/emailmonkey/styles'] = array(
+    'title' => t('Styles'),
+    'description' => t('Add or remove styles applied to exported campaigns.'),
+    'page callback' => 'emailmonkey_admin_page',
+    'page arguments' => array('emailmonkey_form_configure_styles'),
+    'access arguments' => array('emailmonkey_administer'),
+    'type' => MENU_LOCAL_TASK);
+
+  $menu['node/%/emailmonkey/preview'] = array(
+    'title' => t('EmailMonkey'),
+    'description' => t('Preview and export the content as a MailChimp campaign.'),
+    'page callback' => 'emailmonkey_node_contextual_redirect',
+    'page arguments' => array(1, 'preview'),
+    'access callback' => 'emailmonkey_check_node_page_access',
+    'access arguments' => array(1, 'emailmonkey_preview_campaigns', 'preview'),
+    'type' => MENU_LOCAL_TASK);
+
+  $menu['emailmonkey/%'] = array(
+    'title' => t('Preview'),
+    'page callback' => 'emailmonkey_node_page',
+    'page arguments' => array(1, 'preview'),
+    'access callback' => 'emailmonkey_check_node_page_access',
+    'access arguments' => array(1, 'emailmonkey_preview_campaigns', 'preview'),
+    'weight' => -10);
+
+  $menu['emailmonkey/%/preview'] = array(
+    'title' => t('Preview'),
+    'description' => t('Preview and export the content as a MailChimp campaign.'),
+    'page callback' => 'emailmonkey_node_page',
+    'page arguments' => array(1, 'preview'),
+    'access callback' => 'emailmonkey_check_node_page_access',
+    'access arguments' => array(1, 'emailmonkey_preview_campaigns', 'preview'),
+    'weight' => 1,
+    'type' => MENU_DEFAULT_LOCAL_TASK);
+
+  $menu['emailmonkey/%/node'] = array(
+    'title' => t('Node'),
+    'description' => t('Go to the node page.'),
+    'page callback' => 'emailmonkey_node_contextual_redirect',
+    'page arguments' => array(1, 'node'),
+    'access callback' => 'emailmonkey_check_node_page_access',
+    'access arguments' => array(1, 'emailmonkey_preview_campaigns', 'preview'),
+    'weight' => 0,
+    'type' => MENU_LOCAL_TASK);
+
+  $menu['emailmonkey/%/raw'] = array(
+    'title' => t('Raw Preview'),
+    'description' => t('Preview the content exactly as it will be sent to MailChimp.'),
+    'page callback' => 'emailmonkey_node_page',
+    'page arguments' => array(1, 'raw'),
+    'access callback' => 'emailmonkey_check_node_page_access',
+    'access arguments' => array(1, 'emailmonkey_preview_campaigns', 'raw'),
+    'weight' => 2,
+    'type' => MENU_LOCAL_TASK);
+
+  $menu['emailmonkey/%/export'] = array(
+    'title' => t('Export'),
+    'description' => t('Export the content as a MailChimp campaign.'),
+    'page callback' => 'emailmonkey_node_page',
+    'page arguments' => array(1, 'export'),
+    'access callback' => 'emailmonkey_check_node_page_access',
+    'access arguments' => array(1, 'emailmonkey_export_campaigns', 'export'),
+    'weight' => 3,
+    'type' => MENU_LOCAL_TASK);
+
+  $menu['emailmonkey/%/delete'] = array(
+    'title' => t('Delete'),
+    'description' => t('Delete the associated MailChimp campaign.'),
+    'page callback' => 'emailmonkey_node_page',
+    'page arguments' => array(1, 'delete'),
+    'access callback' => 'emailmonkey_check_node_page_access',
+    'access arguments' => array(1, 'emailmonkey_delete_campaigns', 'delete'),
+    'weight' => 4,
+    'type' => MENU_LOCAL_TASK);
+
+  $menu['emailmonkey/%/update'] = array(
+    'title' => t('Update'),
+    'description' => t('Update the associated MailChimp campaign.'),
+    'page callback' => 'emailmonkey_node_page',
+    'page arguments' => array(1, 'update'),
+    'access callback' => 'emailmonkey_check_node_page_access',
+    'access arguments' => array(1, 'emailmonkey_export_campaigns', 'test'),
+    'weight' => 5,
+    'type' => MENU_LOCAL_TASK);
+
+  $menu['emailmonkey/%/test'] = array(
+    'title' => t('Test'),
+    'description' => t('Send the associated MailChimp campaign as a test.'),
+    'page callback' => 'emailmonkey_node_page',
+    'page arguments' => array(1, 'test'),
+    'access callback' => 'emailmonkey_check_node_page_access',
+    'access arguments' => array(1, 'emailmonkey_send_campaigns', 'test'),
+    'weight' => 6,
+    'type' => MENU_LOCAL_TASK);
+
+  $menu['emailmonkey/%/send'] = array(
+    'title' => t('Send'),
+    'description' => t('Send the MailChimp campaign associated with the content.'),
+    'page callback' => 'emailmonkey_node_page',
+    'page arguments' => array(1, 'send'),
+    'access callback' => 'emailmonkey_check_node_page_access',
+    'access arguments' => array(1, 'emailmonkey_send_campaigns', 'send'),
+    'weight' => 7,
+    'type' => MENU_LOCAL_TASK);
+
+  return $menu;
+}
+
+/**
+ * Declare the administrative paths for the module.
+ *
+ * @see hook_admin_paths()
+ */
+function emailmonkey_admin_paths() {
+  $paths['emailmonkey/*'] = TRUE;
+
+  return $paths;
+}
+
+/**
+ * Declare the theme hooks for the module.
+ *
+ * @see hook_theme()
+ */
+function emailmonkey_theme($existing, $type, $theme, $path) {
+  $implementations['emailmonkey_help'] = array(
+    'template' => 'emailmonkey-help',
+    'path' => "{$path}/templates",
+    'file' => "emailmonkey-help.vars.php",
+    'render element' => 'element');
+
+  $implementations['emailmonkey_preview'] = array(
+    'template' => 'emailmonkey-preview',
+    'path' => "{$path}/templates",
+    'file' => "emailmonkey-preview.vars.php",
+    'render element' => 'element');
+
+  $implementations['emailmonkey_raw'] = array(
+    'template' => 'emailmonkey-raw',
+    'path' => "{$path}/templates",
+    'file' => "emailmonkey-raw.vars.php",
+    'render element' => 'page');
+
+  $implementations['emailmonkey_export'] = array(
+    'template' => 'emailmonkey-export',
+    'path' => "{$path}/templates",
+    'file' => "emailmonkey-export.vars.php",
+    'render element' => 'element');
+
+  $implementations['emailmonkey_delete'] = array(
+    'template' => 'emailmonkey-delete',
+    'path' => "{$path}/templates",
+    'file' => "emailmonkey-delete.vars.php",
+    'render element' => 'element');
+
+  $implementations['emailmonkey_update'] = array(
+    'template' => 'emailmonkey-update',
+    'path' => "{$path}/templates",
+    'file' => "emailmonkey-update.vars.php",
+    'render element' => 'element');
+
+  $implementations['emailmonkey_test'] = array(
+    'template' => 'emailmonkey-test',
+    'path' => "{$path}/templates",
+    'file' => "emailmonkey-test.vars.php",
+    'render element' => 'element');
+
+  $implementations['emailmonkey_send'] = array(
+    'template' => 'emailmonkey-send',
+    'path' => "{$path}/templates",
+    'file' => "emailmonkey-send.vars.php",
+    'render element' => 'element');
+
+  return $implementations;
+}
+
+/**
+ * Declare the help content for the module.
+ *
+ * @see hook_help()
+ */
+function emailmonkey_help($path, $arg) {
+  if ($path == 'admin/help#emailmonkey') {
+    return theme('emailmonkey_help');
+  }
+}
+
+/**
+ * Alter pages declared by the module.
+ *
+ * @see hook_page_alter()
+ */
+function emailmonkey_page_alter(&$page) {
+  if (preg_match('/^admin\\/config\\/services\\/emailmonkey/', current_path()) == 1) {
+    if (user_access('administer modules') && !emailmonkey_are_libraries_installed()) {
+      drupal_set_message(t('The library dependencies for EmailMonkey aren\'t installed.'), 'error');
+    }
+  }
+
+  if (preg_match('/^emailmonkey\\/\\d+\\/raw$/', current_path()) == 1) {
+    if (emailmonkey_user_access('emailmonkey_preview_campaigns')) {
+      $page['#theme_wrappers'] = array('emailmonkey_raw');
+      $page['#post_render'][] = 'emailmonkey_page_post_render';
+    }
+  }
+}
+
+/**
+ * Alter the node form.
+ *
+ * @see hook_form_FORM_ID_alter()
+ */
+function emailmonkey_form_node_form_alter(&$form, &$form_state, $form_id) {
+  $node = $form['#node'];
+  $content_type = $form['type']['#value'];
+
+  if (emailmonkey_user_access('emailmonkey_configure_node') && emailmonkey_is_enabled_for_content_type($content_type)) {
+    emailmonkey_load_includes();
+
+    $form['emailmonkey_settings'] = array(
+      '#type' => 'fieldset',
+      '#title' => t('EmailMonkey'),
+      '#collapsible' => TRUE,
+      '#collapsed' => TRUE,
+      '#group' => 'additional_settings');
+
+    $form['emailmonkey_settings']['emailmonkey_view_mode'] = array(
+      '#type' => 'select',
+      '#title' => t('Email campaign view mode'),
+      '#description' => t('The view mode to use when exporting or updating this node\'s MailChimp campaign.'),
+      '#required' => TRUE,
+      '#multiple' => FALSE,
+      '#options' => emailmonkey_view_modes_for_content_type($content_type));
+
+    if (!empty($node->nid)) {
+      $node_data = emailmonkey_data_node_data_for_node($node);
+      $form['emailmonkey_settings']['emailmonkey_view_mode']['#default_value'] = $node_data['view_mode'];
+    }
+
+    $form['#submit'][] = 'emailmonkey_form_node_form_submit';
+  }
+}
+
+/**
+ * Handle submissions of the node form.
+ *
+ * @see hook_form_FORM_ID_submit()
+ */
+function emailmonkey_form_node_form_submit($form, &$form_state) {
+  $node = $form['#node'];
+
+  if (emailmonkey_is_enabled_for_content_type($node->type)) {
+    $node->emailmonkey_view_mode = $form_state['values']['emailmonkey_view_mode'];
+  }
+}
+
+/**
+ * Alter the manage display form for content types.
+ *
+ * @see hook_form_FORM_ID_alter()
+ */
+function emailmonkey_form_field_ui_display_overview_form_alter(&$form, &$form_state, $form_id) {
+  $entity_type = $form['#entity_type'];
+  $content_type = $form['#bundle'];
+  $view_mode = $form['#view_mode'];
+
+  if ($entity_type == 'node' && emailmonkey_user_access('emailmonkey_configure_node') && emailmonkey_is_enabled_for_content_type($content_type)) {
+    emailmonkey_load_includes();
+
+    $form['emailmonkey_settings'] = array(
+      '#type' => 'fieldset',
+      '#title' => t('EmailMonkey'),
+      '#collapsible' => TRUE,
+      '#collapsed' => FALSE);
+
+    $all_styles = variable_get('emailmonkey_styles', array());
+
+    if (count($all_styles) == 0) {
+       $form['emailmonkey_settings']['emailmonkey_message'] = array(
+         '#markup' => t('There are currently no styles. You can add them on the <a href="@styles-url">styles configuration page</a>.', array('@styles-url' => url('admin/config/services/emailmonkey/styles'))));
+    } else {
+      $options = array();
+
+      foreach ($all_styles as $machine_name => $style) {
+        $options[$machine_name] = $style['name'];
+      }
+
+      $form['emailmonkey_settings']['emailmonkey_styles'] = array(
+        '#type' => 'select',
+        '#title' => t('Styles'),
+        '#description' => t('The styles to use when exporting content that uses this view mode.'),
+        '#required' => FALSE,
+        '#multiple' => TRUE,
+        '#default_value' => emailmonkey_data_get_styles_for_content_type_view_mode($content_type, $view_mode),
+        '#options' => $options);
+
+      $form['#submit'][] = 'emailmonkey_form_field_ui_display_overview_form_submit';
+    }
+  }
+}
+
+/**
+ * Handle a submission to the manage display form for content types.
+ *
+ * @see hook_form_FORM_ID_submit()
+ */
+function emailmonkey_form_field_ui_display_overview_form_submit($form, &$form_state) {
+  $entity_type = $form['#entity_type'];
+  $content_type = $form['#bundle'];
+  $view_mode = $form['#view_mode'];
+
+  if ($entity_type == 'node' && emailmonkey_user_access('emailmonkey_configure_node') && emailmonkey_is_enabled_for_content_type($content_type)) {
+    emailmonkey_load_includes();
+
+    $styles = $form_state['values']['emailmonkey_styles'];
+
+    if (!is_array($styles)) {
+      $styles = array();
+    }
+
+    emailmonkey_data_update_styles_for_content_type_view_mode($content_type, $view_mode, $styles);
+  }
+}
+
+/**
+ * Prepare test emails so that MailChimp merge tags don't cause problems.
+ *
+ * @see hook_mail()
+ */
+function emailmonkey_mail($key, &$message, $params) {
+  if ($key == 'test' && !empty($params['node'])) {
+    emailmonkey_load_includes();
+
+    $account_id = variable_get('emailmonkey_account_id');
+    $node = $params['node'];
+    $langcode = $message['language']->language;
+
+    try {
+      $campaign = emailmonkey_campaigns_get_campaign_basics_for_node($node, $account_id);
+    }
+    catch (EmailMonkey_Exception $e) {
+      drupal_set_message(t('Failed to load MailChimp campaign for sending a test email.'), 'error');
+      return;
+    }
+
+    $content = emailmonkey_render_raw_node_with_wrapper($node);
+
+    // Modify MailChimp merge tags inside what appear to be HTML attributes so
+    // that they don't cause HTML formatting issues.
+    $attribute_regexp = '(\\S+\\s*=\\s*(["\'])\\s*)\\*\\|.+?\\|\\*(\\s*\\2)';
+    $content = preg_replace('/'.$attribute_regexp.'/', '$1MAILCHIMP_MERGE_TAG_REMOVED$3', $content);
+
+    $message['subject'] = t('[EMAILMONKEY TEST] !subject_line', array('!subject_line' => $campaign->settings->subject_line), array('langcode' => $langcode));
+    $message['body'][] = $content;
+  }
+}
+
+/**
+ * Handle saving a new node.
+ *
+ * @see hook_node_insert()
+ */
+function emailmonkey_node_insert($node) {
+  if (emailmonkey_is_enabled_for_content_type($node->type)) {
+    emailmonkey_load_includes();
+
+    if (isset($node->emailmonkey_view_mode)) {
+      emailmonkey_data_set_node_data_for_node($node, array(
+        'view_mode' => $node->emailmonkey_view_mode));
+    }
+  }
+}
+
+/**
+ * Handle updating a node.
+ *
+ * @see hook_node_update()
+ */
+function emailmonkey_node_update($node) {
+  if (emailmonkey_is_enabled_for_content_type($node->type)) {
+    emailmonkey_load_includes();
+
+    if (isset($node->emailmonkey_view_mode)) {
+      emailmonkey_data_set_node_data_for_node($node, array(
+        'view_mode' => $node->emailmonkey_view_mode));
+    }
+  }
+}
+
+/**
+ * Handle deleting a node.
+ *
+ * @see hook_node_delete()
+ */
+function emailmonkey_node_delete($node) {
+  emailmonkey_load_includes();
+
+  $account_id = variable_get('emailmonkey_account_id');
+
+  // Don't check if it's enabled for the content type since it might have been
+  // disabled, which would have left the data around.
+  emailmonkey_data_remove_node_data_for_node($node);
+  emailmonkey_data_unlink_node_from_campaign($node, $account_id);
+}
+
+/**
+ * Alter outbound URLs when EmailMonkey is exporting so that they're always
+ * absolute
+ *
+ * @see hook_url_outbound_alter()
+ */
+function emailmonkey_url_outbound_alter(&$path, &$options, $original_path) {
+  global $EMAILMONKEY_EXPORTING;
+
+  if (!empty($EMAILMONKEY_EXPORTING)) {
+    $options['absolute'] = TRUE;
+  }
+}
+
+/**
+ * Remove contextual links when EmailMonkey is exporting.
+ *
+ * @see hook_preprocess()
+ */
+function emailmonkey_preprocess(&$variables, $hook) {
+  global $EMAILMONKEY_EXPORTING;
+
+  if (!empty($EMAILMONKEY_EXPORTING)) {
+    unset($variables['title_prefix']['contextual_links']);
+    unset($variables['title_suffix']['contextual_links']);
+  }
+}
+
+/**
+ * Declare the Display Suite layouts for the module.
+ *
+ * @see hook_ds_layout_info()
+ */
+function emailmonkey_ds_layout_info() {
+  $path = drupal_get_path('module', 'emailmonkey');
+
+  $layouts['emailmonkey_email_template'] = array(
+    'label' => t('EmailMonkey: Email Template'),
+    'path' => "{$path}/layouts/emailmonkey_email_template",
+    'regions' => array(
+      'header_left' => t('Header Left'),
+      'header_center' => t('Header Center'),
+      'header_right' => t('Header Right'),
+      'hero_left' => t('Hero Left'),
+      'hero_center' => t('Hero Center'),
+      'hero_right' => t('Hero Right'),
+      'main_content_left' => t('Content Left'),
+      'main_content_center' => t('Content Center'),
+      'main_content_right' => t('Content Right'),
+      'postscript_left' => t('Postscript Left'),
+      'postscript_center' => t('Postscript Center'),
+      'postscript_right' => t('Postscript Right'),
+      'footer_left' => t('Footer Left'),
+      'footer_center' => t('Footer Center'),
+      'footer_right' => t('Footer Right'),
+      'fine_print_left' => t('Fine Print Left'),
+      'fine_print_center' => t('Fine Print Center'),
+      'fine_print_right' => t('Fine Print Right')),
+    'form' => FALSE,
+    'image' => TRUE);
+
+  return $layouts;
+}
+
+/**
+ * Check if a user has a permission by checking if the user has that permission
+ * or one of the permissions that implies it.
+ *
+ * @see user_access()
+ */
+function emailmonkey_user_access($string, $account=NULL) {
+  if (user_access($string, $account)) {
+    return TRUE;
+  }
+  elseif ($string == 'emailmonkey_preview_campaigns') {
+    return user_access('emailmonkey_export_campaigns', $account)
+      || user_access('emailmonkey_delete_campaigns', $account)
+      || user_access('emailmonkey_send_campaigns', $account);
+  }
+  else {
+    return FALSE;
+  }
+}
+
+/**
+ * This is a mashup of the drupal_mail() function to support HTML email.
+ *
+ * @see drupal_mail()
+ */
+function emailmonkey_html_mail($module, $key, $to, $language, $params=array(), $from=NULL, $send=TRUE) {
+  $default_from = variable_get('site_mail', ini_get('sendmail_from'));
+
+  // Bundle up the variables into a structured array for altering.
+  $message = array(
+    'id' => $module . '_' . $key,
+    'module' => $module,
+    'key' => $key,
+    'to' => $to,
+    'from' => isset($from) ? $from : $default_from,
+    'language' => $language,
+    'params' => $params,
+    'send' => TRUE,
+    'subject' => '',
+    'body' => array()
+  );
+
+  // Build the default headers
+  $headers = array(
+    'MIME-Version' => '1.0',
+    'Content-Type' => 'text/html; charset=UTF-8; format=flowed; delsp=yes',
+    'Content-Transfer-Encoding' => '8Bit',
+    'X-Mailer' => 'Drupal'
+  );
+  if ($default_from) {
+    // To prevent e-mail from looking like spam, the addresses in the Sender and
+    // Return-Path headers should have a domain authorized to use the originating
+    // SMTP server.
+    $headers['From'] = $headers['Sender'] = $headers['Return-Path'] = $default_from;
+  }
+  if ($from) {
+    $headers['From'] = $from;
+  }
+  $message['headers'] = $headers;
+
+  // Build the e-mail (get subject and body, allow additional headers) by
+  // invoking hook_mail() on this module. We cannot use module_invoke() as
+  // we need to have $message by reference in hook_mail().
+  if (function_exists($function = $module . '_mail')) {
+    $function($key, $message, $params);
+  }
+
+  // Invoke hook_mail_alter() to allow all modules to alter the resulting e-mail.
+  drupal_alter('mail', $message);
+
+  // Retrieve the responsible implementation for this message.
+  $system = drupal_mail_system($module, $key);
+
+  $message['body'] = drupal_wrap_mail(implode("\n", $message['body']));
+
+  // Optionally send e-mail.
+  if ($send) {
+    // The original caller requested sending. Sending was canceled by one or
+    // more hook_mail_alter() implementations. We set 'result' to NULL, because
+    // FALSE indicates an error in sending.
+    if (empty($message['send'])) {
+      $message['result'] = NULL;
+    }
+    // Sending was originally requested and was not canceled.
+    else {
+      $message['result'] = $system->mail($message);
+      // Log errors.
+      if (!$message['result']) {
+        watchdog('mail', 'Error sending e-mail (from %from to %to).', array('%from' => $message['from'], '%to' => $message['to']), WATCHDOG_ERROR);
+        drupal_set_message(t('Unable to send e-mail. Contact the site administrator if the problem persists.'), 'error');
+      }
+    }
+  }
+
+  return $message;
+}
+
+/**
+ * Redirect between the Drupal node pages and the EmailMonkey ones.
+ */
+function emailmonkey_node_contextual_redirect($nid, $page) {
+  if ($page == 'node'){
+    drupal_goto("node/{$nid}");
+  } else {
+    emailmonkey_load_includes();
+    drupal_goto(emailmonkey_node_url(node_load($nid), $page));
+  }
+}
+
+/**
+ * Load an admin page for the module.
+ */
+function emailmonkey_admin_page($form_name) {
+  emailmonkey_load_includes();
+
+  return drupal_get_form($form_name);
+}
+
+/**
+ * Load an node page for the module.
+ */
+function emailmonkey_node_page($nid, $page) {
+  emailmonkey_load_includes();
+
+  $account_id = variable_get('emailmonkey_account_id');
+  $node = node_load($nid);
+  $variables['node'] = $node;
+
+  drupal_set_title(t('EmailMonkey'));
+
+  return $page != 'raw' ? theme("emailmonkey_{$page}", $variables) : array();
+}
+
+/**
+ * Encapsulate the logic for whether a user can view a specific EmailMonkey
+ * page.
+ */
+function emailmonkey_check_node_page_access($nid, $permission, $page) {
+  if (!emailmonkey_are_libraries_installed()) {
+    return FALSE;
+  }
+
+  $api_key = variable_get('emailmonkey_api_key');
+
+  if (empty($api_key)) {
+    return FALSE;
+  }
+
+  emailmonkey_load_includes();
+
+  $cache = &drupal_static(__FUNCTION__, array());
+
+  if (empty($cache)) {
+    $node = node_load($nid);
+    $account_id = variable_get('emailmonkey_account_id');
+
+    $cache['node'] = $node;
+    $cache['campaign'] = NULL;
+
+    try {
+      emailmonkey_data_sync_node_data($node, $account_id);
+    }
+    catch (EmailMonkey_Exception $e) {
+      drupal_set_message(t('Failed to sync MailChimp API data.'), 'warning');
+    }
+
+    if (emailmonkey_data_is_node_linked_with_campaign($node, $account_id)) {
+      try {
+        $campaign = emailmonkey_campaigns_get_campaign_basics_for_node($node, $account_id);
+        $cache['campaign'] = $campaign;
+      }
+      catch (EmailMonkey_Exception $e) {
+        drupal_set_message(t('Failed to load MailChimp campaign for testing menu access.'), 'error');
+        return FALSE;
+      }
+    }
+  } else {
+    $node = $cache['node'];
+    $campaign = $cache['campaign'];
+  }
+
+  if (!emailmonkey_user_access($permission)) {
+    return FALSE;
+  }
+
+  if (!emailmonkey_is_enabled_for_content_type($node->type)) {
+    return FALSE;
+  }
+
+  if ($page == 'preview') {
+    return TRUE;
+  }
+
+  $is_linked_to_campaign = !empty($campaign);
+  $has_been_sent = !empty($campaign) && emailmonkey_campaigns_is_sent_status($campaign->status);
+  $node_data = emailmonkey_data_node_data_for_node($node);
+
+  if ($is_linked_to_campaign) {
+    if ($page == 'delete') {
+      return TRUE;
+    }
+
+    if (($page == 'send' || $page == 'test') && !$has_been_sent) {
+      return TRUE;
+    }
+  }
+  elseif ($page == 'export' && !empty($node_data['view_mode'])) {
+    return TRUE;
+  }
+
+  return FALSE;
+}
+
+/**
+ * Determine if EmailMonkey functionality is enabled for a given content type.
+ */
+function emailmonkey_is_enabled_for_content_type($content_type) {
+  $content_types = variable_get('emailmonkey_content_types', array());
+
+  return !empty($content_types[$content_type]);
+}
+
+/**
+ * Get all of the view modes for a given content type.
+ */
+function emailmonkey_view_modes_for_content_type($content_type) {
+  $view_modes = array('default' => t('Default'));
+  $view_mode_settings = field_view_mode_settings('node', $content_type);
+  $ds_vm = ds_entity_view_modes('node');
+
+  foreach ($ds_vm as $key => $item) {
+    $overriden = (!empty($view_mode_settings[$key]['custom_settings']) ? TRUE : FALSE);
+
+    if ($overriden) {
+      $view_modes[$key] = $item['label'];
+    }
+  }
+
+  return $view_modes;
+}
+
+/**
+ * Callback for the raw preview page to render the node.
+ */
+function emailmonkey_page_post_render($content, $render) {
+  try {
+    emailmonkey_load_libraries();
+  }
+  catch (EmailMonkey_Exception $e) {
+    $message = check_plain($e->getMessage());
+
+    return "<html><body><p>{$message}</p></body></html>";
+  }
+
+  $content = emailmonkey_rewrite_urls($content);
+  $content = emailmonkey_minify_html($content);
+  $content = emailmonkey_emogrify_html($content);
+
+  return $content;
+}

@@ -1,0 +1,76 @@
+body {
+  margin-top: 0 !important;
+  margin-right: 0 !important;
+  margin-bottom: 0 !important;
+  margin-left: 0 !important;
+  padding-top: 0;
+  padding-right: 0;
+  padding-bottom: 0;
+  padding-left: 0;
+}
+
+/**
+ * Remove the margin from these block-level elements since setting them to
+ * anything other than zero isn't supported in Outlook, the lowest common
+ * denominator. For these elements, padding, a border, or both should be used to
+ * add spacing since it creates a more consistent look across email client.
+ */
+h1, h2, h3, h4, h5, h6, address, pre, blockquote, ol, ul, li, dl, dt, dd, div {
+  margin-top: 0;
+  margin-right: 0;
+  margin-bottom: 0;
+  margin-left: 0;
+}
+
+/**
+ * Only remove the side margins for these block-level elements since there's no
+ * other way to add spacing (in Outlook) than to use the default values of the
+ * email client. These elements should have their top and bottom margins
+ * removed, if necessary, based on their context.
+ */
+p {
+  margin-right: 0;
+  margin-left: 0;
+}
+
+/**
+ * These block-level elements can only have spacing by specifying the left
+ * margin, which can be overriden later on.
+ */
+ol, ul, li {
+  margin-top: 0;
+  margin-right: 0;
+  margin-bottom: 0;
+  margin-left: 20px;
+
+  padding-top: 0;
+  padding-right: 0;
+  padding-bottom: 0;
+  padding-left: 0;
+}
+
+table {
+  mso-table-lspace: 0pt;
+  mso-table-rspace: 0pt;
+  border-collapse: collapse;
+  border-spacing: 0;
+}
+
+td {
+  padding-top: 0;
+  padding-right: 0;
+  padding-bottom: 0;
+  padding-left: 0;
+}
+
+img {
+  border-top-width: 0;
+  border-right-width: 0;
+  border-bottom-width: 0;
+  border-left-width: 0;
+}
+
+p, a, li, td, body, table, blockquote {
+  -ms-text-size-adjust: 100%;
+  -webkit-text-size-adjust: 100%;
+}

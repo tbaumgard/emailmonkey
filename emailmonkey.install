@@ -1,0 +1,95 @@
+<?php
+/**
+ * @file emailmonkey.install
+ * Install, update, and uninstall the module.
+ */
+
+/**
+ * Declare the module's database schema.
+ *
+ * @see hook_schema()
+ */
+function emailmonkey_schema() {
+  $schema['emailmonkey_node_data'] = array(
+    'description' => 'Table to hold EmailMonkey data associated with nodes.',
+    'fields' => array(
+      'node_id' => array(
+        'description' => 'Node ID.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE),
+      'view_mode' => array(
+        'description' => 'View mode to use when exporting.',
+        'type' => 'varchar',
+        'length' => 64,
+        'not null' => TRUE)),
+    'primary key' => array('node_id'));
+
+  $schema['emailmonkey_campaigns'] = array(
+    'description' => 'Table to hold MailChimp campaigns associated with accounts and nodes.',
+    'fields' => array(
+      'node_id' => array(
+        'description' => 'Node ID.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE),
+      'account_id' => array(
+        'description' => 'MailChimp account ID.',
+        'type' => 'varchar',
+        'length' => 32,
+        'not null' => TRUE),
+      'campaign_id' => array(
+        'description' => 'MailChimp campaign ID.',
+        'type' => 'varchar',
+        'length' => 32,
+        'not null' => TRUE)),
+    'indexes' => array(
+      'nid_and_aid' => array('node_id', 'account_id')));
+
+  $schema['emailmonkey_styles'] = array(
+    'description' => 'Table to hold mappings between content type view modes and styles.',
+    'fields' => array(
+      'content_type' => array(
+        'description' => 'Content type.',
+        'type' => 'varchar',
+        'length' => 64,
+        'not null' => TRUE),
+      'view_mode' => array(
+        'description' => 'View mode.',
+        'type' => 'varchar',
+        'length' => 64,
+        'not null' => TRUE),
+      'style' => array(
+        'description' => 'Machine name of the style to use.',
+        'type' => 'varchar',
+        'length' => 64,
+        'not null' => TRUE)),
+    'indexes' => array(
+      'ct_and_vm' => array('content_type', 'view_mode')));
+
+  return $schema;
+}
+
+/**
+ * Install the module.
+ *
+ * @see hook_install()
+ */
+function emailmonkey_install() {
+  $t = get_t();
+  $config_url = url('admin/config/services/emailmonkey');
+
+  drupal_set_message($t('EmailMonkey has been installed. You also need to <a href="@config_url">configure it</a> before you can fully use it.', array('@config_url' => $config_url)));
+}
+
+/**
+ * Uninstall the module.
+ *
+ * @see hook_uninstall()
+ */
+function emailmonkey_uninstall() {
+  variable_del('emailmonkey_api_key');
+  variable_del('emailmonkey_account_id');
+  variable_del('emailmonkey_content_types');
+  variable_del('emailmonkey_styles');
+}
